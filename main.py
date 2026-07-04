@@ -39,6 +39,16 @@ print("Vanishing points:",
 print("Perspective score:",
       results["perspective_score"])
 
+print("\nVANISHING POINTS:\n")
+
+for i, vp in enumerate(results["vps"]):
+
+    print(
+        f"VP {i+1}: "
+        f"{100*vp['confidence']:.1f}% confidence "
+        f"({vp['inliers']}/{vp['total_intersections']})"
+    )
+
 print()
 
 show_results(results)

@@ -2,25 +2,13 @@
 
 """
 Perspective Analysis Module
-
-Inspired by:
-Hany Farid - Photo Forensics:
-Perspective, Vanishing Points, and Projective Geometry
-
-V1 Features:
-- Canny edge detection
-- Hough line detection
-- Homogeneous line equations
-- Parallel line grouping
-- Pairwise intersections
-- Vanishing point estimation
-- Perspective consistency scoring
 """
 
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from itertools import combinations
+from sklearn.cluster import DBSCAN
 
 
 class PerspectiveAnalyzer:
@@ -34,7 +22,8 @@ class PerspectiveAnalyzer:
         max_line_gap=10,
         angle_threshold=15,
         min_group_size=15,
-        max_groups=3
+        max_groups=3,
+        max_lines_for_vp=50
     ):
 
         self.canny_low = canny_low
@@ -45,8 +34,11 @@ class PerspectiveAnalyzer:
         self.max_line_gap = max_line_gap
 
         self.angle_threshold = angle_threshold
+        
         self.min_group_size = min_group_size
         self.max_groups = max_groups
+        
+        self.max_lines_for_vp=50
 
 
     # =====================================================
@@ -84,22 +76,6 @@ class PerspectiveAnalyzer:
             self.canny_high
         )
 
-
-    # def detect_lines(self, edges):
-
-    #     lines = cv2.HoughLinesP(
-    #         edges,
-    #         rho=1,
-    #         theta=np.pi / 180,
-    #         threshold=self.hough_threshold,
-    #         minLineLength=self.min_line_length,
-    #         maxLineGap=self.max_line_gap
-    #     )
-
-    #     if lines is None:
-    #         return []
-
-    #     return lines[:, 0]
     
     def detect_lines(self, edges):
 
@@ -122,7 +98,7 @@ class PerspectiveAnalyzer:
         processed_lines = []
 
         for line in lines:
-
+            
             x1, y1, x2, y2 = line
 
             processed_lines.append(
@@ -162,6 +138,15 @@ class PerspectiveAnalyzer:
         )
 
         return angle % 180
+    
+    def line_length(self, line):
+
+        x1, y1, x2, y2 = line
+
+        return np.sqrt(
+            (x2 - x1)**2 +
+            (y2 - y1)**2
+        )
 
 
     def intersection(self, l1, l2):
@@ -188,37 +173,26 @@ class PerspectiveAnalyzer:
         for line in lines:
 
             angle = self.line_angle(line)
-
             assigned = False
 
             for group in groups:
 
                 group_angle = group["angle"]
-
-                # if abs(angle - group_angle) < self.angle_threshold:
                 
                 diff = min(
-
                     abs(angle - group_angle),
-
                     180 - abs(angle - group_angle)
-
                 )
 
                 if diff < self.angle_threshold:
-
                     group["lines"].append(line)
-
                     assigned = True
                     break
 
             if not assigned:
-
                 groups.append({
-
                     "angle": angle,
                     "lines": [line]
-
                 })
         
         print("\nGROUP STATISTICS:\n")
@@ -243,11 +217,18 @@ class PerspectiveAnalyzer:
         if len(lines) < 2:
             return None
 
-        homogeneous_lines = [
+        # Keep only longest lines
+        lines = sorted(
+            lines,
+            key=self.line_length,
+            reverse=True
+        )
 
+        lines = lines[:self.max_lines_for_vp]
+
+        homogeneous_lines = [
             self.line_to_homogeneous(line)
             for line in lines
-
         ]
 
         intersections = []
@@ -258,62 +239,97 @@ class PerspectiveAnalyzer:
         ):
 
             point = self.intersection(l1, l2)
-
             if point is not None:
+                x, y = point
 
-                intersections.append(point)
+                # Ignore absurd intersections
+                if abs(x) < 5000 and abs(y) < 5000:
+                    intersections.append(point)
 
-        if len(intersections) == 0:
+        if len(intersections) < 5:
             return None
 
         intersections = np.array(intersections)
+        
+        print(
+            f"Total intersections: "
+            f"{len(intersections)}"
+        )
 
-        # Simple centroid estimate
-        vp_x = np.median(intersections[:, 0])
-        vp_y = np.median(intersections[:, 1])
+        # -----------------------------------
+        # DBSCAN
+        # -----------------------------------
 
-        return (vp_x, vp_y)
+        clustering = DBSCAN(
+            eps=100,
+            min_samples=5
+        )
+        
+        labels = clustering.fit_predict(
+            intersections
+        )
+
+        unique_labels = set(labels)
+        unique_labels.discard(-1)
+
+        if len(unique_labels) == 0:
+            return None
+
+        largest_cluster = None
+        largest_size = 0
+
+        for label in unique_labels:
+            cluster_points = intersections[
+                labels == label
+            ]
+            if len(cluster_points) > largest_size:
+                largest_size = len(cluster_points)
+                largest_cluster = cluster_points
+
+        vp_x = np.median(
+            largest_cluster[:, 0]
+        )
+
+        vp_y = np.median(
+            largest_cluster[:, 1]
+        )
+
+        inlier_ratio = largest_size / len(intersections)
+
+        print(
+            f"DBSCAN: "
+            f"{largest_size}/{len(intersections)} "
+            f"({100*inlier_ratio:.1f}% inliers)"
+        )
+        return {
+            "point": (float(vp_x), float(vp_y)),
+            "inliers": largest_size,
+            "total_intersections": len(intersections),
+            "confidence": inlier_ratio
+        }
 
 
     # =====================================================
     # SCORING
     # =====================================================
 
-    # def perspective_score(self, groups):
+    def perspective_score(self, vanishing_points):
 
-    #     if len(groups) == 0:
-    #         return 0.0
-
-    #     line_counts = [
-
-    #         len(group["lines"])
-    #         for group in groups
-
-    #     ]
-
-    #     dominant = max(line_counts)
-
-    #     total = sum(line_counts)
-
-    #     score = dominant / total
-
-    #     return round(score, 3)
-    
-    def perspective_score(self, groups):
-
-        if len(groups) < 2:
+        if len(vanishing_points) == 0:
             return 0.0
 
-        total_lines = sum(
-            len(g["lines"])
-            for g in groups
+        confidences = [
+
+            vp["confidence"]
+
+            for vp in vanishing_points
+
+        ]
+
+        return round(
+            np.mean(confidences),
+            3
         )
-
-        dominant_lines = total_lines
-
-        score = dominant_lines / total_lines
-
-        return round(score, 3)
 
 
     # =====================================================
@@ -399,15 +415,17 @@ class PerspectiveAnalyzer:
 
             if len(group["lines"]) >= 2:
 
-                vp = self.estimate_vanishing_point(
+                vp_data = self.estimate_vanishing_point(
                     group["lines"]
                 )
 
-                if vp is not None:
+                print("VP DATA:", vp_data)
 
-                    vanishing_points.append(vp)
+                if vp_data is not None:
 
-        score = self.perspective_score(groups)
+                    vanishing_points.append(vp_data)
+
+        score = self.perspective_score(vanishing_points)
 
         line_image = self.draw_lines(
             image,
@@ -420,7 +438,7 @@ class PerspectiveAnalyzer:
 
             vp_image = self.draw_vanishing_point(
                 vp_image,
-                vp
+                vp["point"]
             )
 
         return {
