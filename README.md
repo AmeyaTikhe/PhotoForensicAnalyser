@@ -220,10 +220,4 @@ Panels left to right: `Original`, `L channel`, `Local illumination`, `Discontinu
 * **Shadow mask (filtered)** keeps only the diagonal light/shadow bands cast across the floor by the windows, plus a couple of shapes near the railing — and nothing above the floor line. That's the lower-45% floor ROI combined with the aspect-ratio and extent filters: the sharp, elongated diagonal bands from the window mullions pass the elongation and area checks, while the person's soft, compact discontinuity blob gets filtered out for not being shadow-like enough.
 * **Light direction** overlays the surviving shadow bands in green (their PCA-fit axis) with a red arrow near the pillar. The arrow points to the right and slightly into the room, consistent with the window bank being on the left side of the frame — the brighter-side patch sampling step chose that direction over its 180°-flipped alternative because the floor is visibly brighter on the side the arrow points away from.
 
-## Current Limitations
-
-* The shadow ROI is restricted to the lower `45%` of the image.
-* Light direction is estimated from shadow orientation and local brightness rather than a full physical illumination model.
-* Camera geometry and surface orientation are not explicitly recovered.
-* The hue filter is optional and disabled by default.
 
